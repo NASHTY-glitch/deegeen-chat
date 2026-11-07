@@ -21,8 +21,8 @@ const DATA_DIR = process.env.CHAT_DATA_DIR || path.join(__dirname, 'data');
 fs.mkdirSync(DATA_DIR, { recursive: true });
 
 const PORT = process.env.PORT || 3000;
-const MAX_IMAGE_BYTES = 1.5 * 1024 * 1024; // ~1.5MB decoded photo cap
-const MAX_BODY_BYTES = 3 * 1024 * 1024;
+const MAX_IMAGE_BYTES = 8 * 1024 * 1024; // ~8MB decoded photo cap (client also compresses before sending)
+const MAX_BODY_BYTES = 16 * 1024 * 1024;
 
 // ---------- database ----------
 const db = new DatabaseSync(path.join(DATA_DIR, 'chat.db'));
@@ -252,7 +252,7 @@ async function handleApi(req, res, url) {
         return sendJson(res, 400, { error: 'image must be a data URL' });
       const approxBytes = Math.floor((image.length * 3) / 4);
       if (approxBytes > MAX_IMAGE_BYTES)
-        return sendJson(res, 413, { error: 'photo too large (max ~1.5MB)' });
+        return sendJson(res, 413, { error: 'photo too large (max ~8MB)' });
     }
     const info = db
       .prepare(
