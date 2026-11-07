@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#075E54">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>Deegeen Chat</title>
+<link rel="stylesheet" href="style.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>💬</text></svg>">
+</head>
+<body>
+
+<!-- ===== Auth screen ===== -->
+<section id="screen-auth" class="screen">
+  <div class="auth-box">
+    <div class="auth-logo">💬</div>
+    <h1 class="app-name">Deegeen Chat</h1>
+    <p class="auth-sub">Chat with your people, on your own server.</p>
+
+    <div class="auth-tabs">
+      <button id="tab-login" class="auth-tab active" type="button">Log in</button>
+      <button id="tab-register" class="auth-tab" type="button">Register</button>
+    </div>
+
+    <form id="form-login" class="auth-form">
+      <input id="login-username" placeholder="Username" autocomplete="username" required>
+      <input id="login-password" type="password" placeholder="Password / PIN" autocomplete="current-password" required>
+      <button class="btn-primary" type="submit">Log in</button>
+    </form>
+
+    <form id="form-register" class="auth-form hidden">
+      <input id="reg-username" placeholder="Choose a username" autocomplete="username" required>
+      <input id="reg-phone" type="tel" placeholder="Phone number" autocomplete="tel" required>
+      <input id="reg-password" type="password" placeholder="Password / PIN (min 4)" autocomplete="new-password" required>
+      <button class="btn-primary" type="submit">Create account</button>
+    </form>
+
+    <p id="auth-error" class="error"></p>
+  </div>
+</section>
+
+<!-- ===== Chat list screen ===== -->
+<section id="screen-list" class="screen hidden">
+  <header class="app-header">
+    <span class="app-name">Deegeen Chat</span>
+    <span class="header-right">
+      <span id="me-label" class="me-label"></span>
+      <button id="btn-logout" class="header-btn" type="button">Log out</button>
+    </span>
+  </header>
+
+  <div id="chat-list" class="chat-list"></div>
+  <p id="list-empty" class="empty-note hidden">No chats yet. Start one below 👇</p>
+
+  <h2 class="section-title">New chat</h2>
+  <div id="user-list" class="chat-list"></div>
+  <p id="users-empty" class="empty-note hidden">No other users yet — invite a friend to register.</p>
+</section>
+
+<!-- ===== Chat screen ===== -->
+<section id="screen-chat" class="screen hidden">
+  <header class="app-header chat-header">
+    <button id="btn-back" class="header-btn back-btn" type="button">‹</button>
+    <span id="chat-title" class="chat-title"></span>
+  </header>
+
+  <div id="messages" class="messages"></div>
+
+  <form id="form-send" class="composer">
+    <label class="attach-btn" title="Send a photo">
+      📎
+      <input id="file-photo" type="file" accept="image/*" hidden>
+    </label>
+    <input id="input-text" placeholder="Type a message" autocomplete="off">
+    <button class="send-btn" type="submit">➤</button>
+  </form>
+</section>
+
+<script src="app.js"></script>
+</body>
+</html>
