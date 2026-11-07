@@ -1,0 +1,17 @@
+{
+  "dependencies": {
+    "ws": "^8.18.0"
+  },
+  "description": "Deegeen Chat \u2014 a WhatsApp-style 1-to-1 chat app on its own server.",
+  "name": "deegeen-chat",
+  "private": true,
+  "scripts": {
+    "start": "node server/server.mjs",
+    "test": "node test/two-clients.mjs"
+  },
+  "type": "module",
+  "version": "1.0.0",
+  "engines": {
+    "node": ">=22.5.0"
+  }
+}
