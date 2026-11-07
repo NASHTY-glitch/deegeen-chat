@@ -209,18 +209,48 @@ $('file-photo').onchange = async (e) => {
   const file = e.target.files[0];
   e.target.value = '';
   if (!file || !currentChat) return;
-  if (file.size > 1.5 * 1024 * 1024) { alert('Photo too large (max ~1.5MB)'); return; }
-  const dataUrl = await new Promise((resolve, reject) => {
-    const r = new FileReader();
-    r.onload = () => resolve(r.result);
-    r.onerror = reject;
-    r.readAsDataURL(file);
-  });
+  if (file.size > 20 * 1024 * 1024) { alert('Photo too large (max ~20MB)'); return; }
+  let dataUrl;
+  try {
+    dataUrl = await preparePhoto(file);
+  } catch (err) { alert('Could not read that photo'); return; }
   try {
     const { message } = await api('POST', '/api/messages', { to: currentChat, image: dataUrl });
     addOrUpdateBubble(message);
   } catch (err) { alert(err.message); }
 };
+
+// Photos already small enough go as-is; bigger ones are resized to at most
+// 1600px on the long side and re-encoded as JPEG so phone photos (2-8MB)
+// send quickly and stay well under the server's ~8MB cap.
+async function preparePhoto(file) {
+  const original = await new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(r.result);
+    r.onerror = reject;
+    r.readAsDataURL(file);
+  });
+  if (file.size <= 900 * 1024) return original;
+  try {
+    const img = await new Promise((resolve, reject) => {
+      const i = new Image();
+      i.onload = () => resolve(i);
+      i.onerror = reject;
+      i.src = original;
+    });
+    const scale = Math.min(1, 1600 / Math.max(img.naturalWidth, img.naturalHeight));
+    const w = Math.max(1, Math.round(img.naturalWidth * scale));
+    const h = Math.max(1, Math.round(img.naturalHeight * scale));
+    const canvas = document.createElement('canvas');
+    canvas.width = w;
+    canvas.height = h;
+    canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+    const compressed = canvas.toDataURL('image/jpeg', 0.82);
+    return compressed.length < original.length ? compressed : original;
+  } catch {
+    return original;
+  }
+}
 
 // ---------- websocket ----------
 function connectWs() {
