@@ -1,5 +1,6 @@
 {
   "dependencies": {
+    "@libsql/client": "^0.15.15",
     "ws": "^8.18.0"
   },
   "description": "Deegeen Chat \u2014 a WhatsApp-style 1-to-1 chat app on its own server.",

@@ -30,6 +30,14 @@ Then open http://localhost:3000 in a browser (or on a phone on the same network,
 using the machine's LAN address). Data lives in `server/data/chat.db`
 (override with the `CHAT_DATA_DIR` env var).
 
+## Permanent storage (Turso)
+
+Set `TURSO_DATABASE_URL` (a `libsql://...` URL) and `TURSO_AUTH_TOKEN` and the
+server stores everything in a hosted Turso database instead of the local file,
+so accounts and messages survive restarts and redeploys (e.g. on Render's free
+tier, whose disk is wiped on every deploy). Without those two variables the
+local file is used.
+
 ## Test
 
 ```bash
