@@ -52,6 +52,13 @@ body {
 .auth-form input {
   padding: 12px; font-size: 16px; border: 1px solid #ccc; border-radius: 8px; width: 100%;
 }
+.pass-wrap { position: relative; }
+.pass-wrap input { padding-right: 48px; }
+.pass-toggle {
+  position: absolute; right: 6px; top: 50%; transform: translateY(-50%);
+  background: none; border: none; font-size: 20px; line-height: 1;
+  padding: 8px; cursor: pointer; color: #555;
+}
 .btn-primary {
   background: #128C7E; color: #fff; border: none; border-radius: 8px;
   padding: 13px; font-size: 16px; font-weight: 600; cursor: pointer;

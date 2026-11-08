@@ -26,14 +26,20 @@
 
     <form id="form-login" class="auth-form">
       <input id="login-username" placeholder="Username" autocomplete="username" required>
-      <input id="login-password" type="password" placeholder="Password / PIN" autocomplete="current-password" required>
+      <div class="pass-wrap">
+        <input id="login-password" type="password" placeholder="Password / PIN" autocomplete="current-password" required>
+        <button class="pass-toggle" type="button" data-target="login-password" aria-label="Show password">👁</button>
+      </div>
       <button class="btn-primary" type="submit">Log in</button>
     </form>
 
     <form id="form-register" class="auth-form hidden">
       <input id="reg-username" placeholder="Choose a username" autocomplete="username" required>
       <input id="reg-phone" type="tel" placeholder="Phone number" autocomplete="tel" required>
-      <input id="reg-password" type="password" placeholder="Password / PIN (min 4)" autocomplete="new-password" required>
+      <div class="pass-wrap">
+        <input id="reg-password" type="password" placeholder="Password / PIN (min 4)" autocomplete="new-password" required>
+        <button class="pass-toggle" type="button" data-target="reg-password" aria-label="Show password">👁</button>
+      </div>
       <button class="btn-primary" type="submit">Create account</button>
     </form>
 

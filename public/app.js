@@ -33,6 +33,17 @@ function show(screenId) {
 }
 
 // ---------- auth ----------
+// Show/hide password (eye button on the password fields).
+for (const btn of document.querySelectorAll('.pass-toggle')) {
+  btn.onclick = () => {
+    const input = $(btn.dataset.target);
+    const showIt = input.type === 'password';
+    input.type = showIt ? 'text' : 'password';
+    btn.textContent = showIt ? '🙈' : '👁';
+    btn.setAttribute('aria-label', showIt ? 'Hide password' : 'Show password');
+  };
+}
+
 $('tab-login').onclick = () => setAuthTab('login');
 $('tab-register').onclick = () => setAuthTab('register');
 function setAuthTab(which) {
