@@ -1,6 +1,8 @@
 // Deegeen Chat — backend server.
 // One Node process: REST API + WebSocket + serves the phone web client from ../public.
-// Storage: built-in node:sqlite. Passwords: scrypt hashes only. No external services.
+// Storage: Turso (hosted SQLite) when TURSO_DATABASE_URL is set — data then
+// survives restarts and redeploys — otherwise a local node:sqlite file.
+// Passwords: scrypt hashes only.
 
 import http from 'node:http';
 import fs from 'node:fs';
@@ -25,29 +27,77 @@ const MAX_IMAGE_BYTES = 8 * 1024 * 1024; // ~8MB decoded photo cap (client also 
 const MAX_BODY_BYTES = 16 * 1024 * 1024;
 
 // ---------- database ----------
-const db = new DatabaseSync(path.join(DATA_DIR, 'chat.db'));
-db.exec(`
-  CREATE TABLE IF NOT EXISTS users (
+// Small async store interface over two backends: get(sql, params),
+// all(sql, params), run(sql, params) -> { lastInsertRowid }.
+const SCHEMA = [
+  `CREATE TABLE IF NOT EXISTS users (
     username TEXT PRIMARY KEY,
     phone TEXT NOT NULL,
     pass_hash TEXT NOT NULL,
     created_at INTEGER NOT NULL
-  );
-  CREATE TABLE IF NOT EXISTS sessions (
+  )`,
+  `CREATE TABLE IF NOT EXISTS sessions (
     token TEXT PRIMARY KEY,
     username TEXT NOT NULL,
     created_at INTEGER NOT NULL
-  );
-  CREATE TABLE IF NOT EXISTS messages (
+  )`,
+  `CREATE TABLE IF NOT EXISTS messages (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     sender TEXT NOT NULL,
     recipient TEXT NOT NULL,
     text TEXT,
     image TEXT,
-    state TEXT NOT NULL DEFAULT 'sent',  -- sent -> delivered -> read
+    state TEXT NOT NULL DEFAULT 'sent',
     created_at INTEGER NOT NULL
-  );
-`);
+  )`,
+];
+
+async function createStore() {
+  if (process.env.TURSO_DATABASE_URL) {
+    const { createClient } = await import('@libsql/client');
+    const client = createClient({
+      url: process.env.TURSO_DATABASE_URL,
+      authToken: process.env.TURSO_AUTH_TOKEN || '',
+    });
+    const norm = (v) => (typeof v === 'bigint' ? Number(v) : v);
+    const rowsOf = (rs) =>
+      rs.rows.map((r) => {
+        const o = {};
+        for (const c of rs.columns) o[c] = norm(r[c]);
+        return o;
+      });
+    const store = {
+      async get(sql, params = []) {
+        const rs = await client.execute({ sql, args: params });
+        return rowsOf(rs)[0];
+      },
+      async all(sql, params = []) {
+        const rs = await client.execute({ sql, args: params });
+        return rowsOf(rs);
+      },
+      async run(sql, params = []) {
+        const rs = await client.execute({ sql, args: params });
+        return { lastInsertRowid: rs.lastInsertRowid != null ? Number(rs.lastInsertRowid) : null };
+      },
+    };
+    for (const stmt of SCHEMA) await client.execute(stmt);
+    console.log('storage: Turso (persistent)');
+    return store;
+  }
+  const db = new DatabaseSync(path.join(DATA_DIR, 'chat.db'));
+  for (const stmt of SCHEMA) db.exec(stmt);
+  console.log('storage: local sqlite file');
+  return {
+    async get(sql, params = []) { return db.prepare(sql).get(...params); },
+    async all(sql, params = []) { return db.prepare(sql).all(...params); },
+    async run(sql, params = []) {
+      const info = db.prepare(sql).run(...params);
+      return { lastInsertRowid: Number(info.lastInsertRowid) };
+    },
+  };
+}
+
+const store = await createStore();
 
 // ---------- helpers ----------
 async function hashPassword(password) {
@@ -93,11 +143,11 @@ async function readJson(req) {
   return JSON.parse(raw);
 }
 
-function authUser(req) {
+async function authUser(req) {
   const header = req.headers.authorization || '';
   const token = header.startsWith('Bearer ') ? header.slice(7) : null;
   if (!token) return null;
-  const row = db.prepare('SELECT username FROM sessions WHERE token = ?').get(token);
+  const row = await store.get('SELECT username FROM sessions WHERE token = ?', [token]);
   return row ? row.username : null;
 }
 
@@ -138,22 +188,23 @@ function isOnline(username) {
 }
 
 // Mark a message delivered if the recipient is online, push it, and receipt the sender.
-function deliverMessage(msg) {
+async function deliverMessage(msg) {
   if (msg.state !== 'sent') return msg;
   if (!isOnline(msg.to)) return msg;
   pushTo(msg.to, { type: 'message', message: msg });
-  db.prepare("UPDATE messages SET state = 'delivered' WHERE id = ?").run(msg.id);
+  await store.run("UPDATE messages SET state = 'delivered' WHERE id = ?", [msg.id]);
   const updated = { ...msg, state: 'delivered' };
   pushTo(msg.from, { type: 'receipt', ids: [msg.id], state: 'delivered', with: msg.to });
   return updated;
 }
 
 // When a user connects, deliver anything waiting for them.
-function deliverPending(username) {
-  const rows = db
-    .prepare("SELECT * FROM messages WHERE recipient = ? AND state = 'sent' ORDER BY id ASC")
-    .all(username);
-  for (const r of rows) deliverMessage(msgRowToObj(r));
+async function deliverPending(username) {
+  const rows = await store.all(
+    "SELECT * FROM messages WHERE recipient = ? AND state = 'sent' ORDER BY id ASC",
+    [username]
+  );
+  for (const r of rows) await deliverMessage(msgRowToObj(r));
 }
 
 // ---------- REST ----------
@@ -168,61 +219,56 @@ async function handleApi(req, res, url) {
       return sendJson(res, 400, { error: 'username must be 3-24 chars: letters, numbers, _ . -' });
     if (String(password).length < 4)
       return sendJson(res, 400, { error: 'password/PIN must be at least 4 characters' });
-    const existing = db.prepare('SELECT username FROM users WHERE username = ?').get(username);
+    const existing = await store.get('SELECT username FROM users WHERE username = ?', [username]);
     if (existing) return sendJson(res, 409, { error: 'username already taken' });
     const passHash = await hashPassword(String(password));
-    db.prepare('INSERT INTO users (username, phone, pass_hash, created_at) VALUES (?, ?, ?, ?)')
-      .run(username, String(phone), passHash, Date.now());
+    await store.run(
+      'INSERT INTO users (username, phone, pass_hash, created_at) VALUES (?, ?, ?, ?)',
+      [username, String(phone), passHash, Date.now()]
+    );
     const token = randomBytes(32).toString('hex');
-    db.prepare('INSERT INTO sessions (token, username, created_at) VALUES (?, ?, ?)')
-      .run(token, username, Date.now());
+    await store.run('INSERT INTO sessions (token, username, created_at) VALUES (?, ?, ?)',
+      [token, username, Date.now()]);
     return sendJson(res, 201, { token, username });
   }
 
   if (req.method === 'POST' && route === '/api/login') {
     const { username, password } = await readJson(req);
-    const user = db.prepare('SELECT * FROM users WHERE username = ?').get(username || '');
+    const user = await store.get('SELECT * FROM users WHERE username = ?', [username || '']);
     if (!user || !(await verifyPassword(String(password || ''), user.pass_hash)))
       return sendJson(res, 401, { error: 'wrong username or password' });
     const token = randomBytes(32).toString('hex');
-    db.prepare('INSERT INTO sessions (token, username, created_at) VALUES (?, ?, ?)')
-      .run(token, username, Date.now());
+    await store.run('INSERT INTO sessions (token, username, created_at) VALUES (?, ?, ?)',
+      [token, username, Date.now()]);
     return sendJson(res, 200, { token, username });
   }
 
   // everything below requires auth
-  const me = authUser(req);
+  const me = await authUser(req);
   if (!me) return sendJson(res, 401, { error: 'not logged in' });
 
   if (req.method === 'GET' && route === '/api/users') {
-    const rows = db
-      .prepare('SELECT username, phone FROM users WHERE username != ? ORDER BY username ASC')
-      .all(me);
+    const rows = await store.all(
+      'SELECT username, phone FROM users WHERE username != ? ORDER BY username ASC', [me]);
     return sendJson(res, 200, { users: rows });
   }
 
   if (req.method === 'GET' && route === '/api/conversations') {
     // Last message + unread count per other user, for the chat list.
-    const others = db
-      .prepare('SELECT username FROM users WHERE username != ?')
-      .all(me)
+    const others = (await store.all('SELECT username FROM users WHERE username != ?', [me]))
       .map((r) => r.username);
     const convs = [];
     for (const other of others) {
-      const last = db
-        .prepare(
-          `SELECT * FROM messages
-           WHERE (sender = ? AND recipient = ?) OR (sender = ? AND recipient = ?)
-           ORDER BY id DESC LIMIT 1`
-        )
-        .get(me, other, other, me);
+      const last = await store.get(
+        `SELECT * FROM messages
+         WHERE (sender = ? AND recipient = ?) OR (sender = ? AND recipient = ?)
+         ORDER BY id DESC LIMIT 1`,
+        [me, other, other, me]);
       if (!last) continue;
-      const unread = db
-        .prepare(
-          "SELECT COUNT(*) AS n FROM messages WHERE sender = ? AND recipient = ? AND state != 'read'"
-        )
-        .get(other, me).n;
-      convs.push({ with: other, last: msgRowToObj(last), unread });
+      const unreadRow = await store.get(
+        "SELECT COUNT(*) AS n FROM messages WHERE sender = ? AND recipient = ? AND state != 'read'",
+        [other, me]);
+      convs.push({ with: other, last: msgRowToObj(last), unread: unreadRow.n });
     }
     convs.sort((a, b) => b.last.id - a.last.id);
     return sendJson(res, 200, { conversations: convs });
@@ -231,13 +277,11 @@ async function handleApi(req, res, url) {
   if (req.method === 'GET' && route === '/api/messages') {
     const other = url.searchParams.get('with');
     if (!other) return sendJson(res, 400, { error: 'missing ?with=<username>' });
-    const rows = db
-      .prepare(
-        `SELECT * FROM messages
-         WHERE (sender = ? AND recipient = ?) OR (sender = ? AND recipient = ?)
-         ORDER BY id ASC`
-      )
-      .all(me, other, other, me);
+    const rows = await store.all(
+      `SELECT * FROM messages
+       WHERE (sender = ? AND recipient = ?) OR (sender = ? AND recipient = ?)
+       ORDER BY id ASC`,
+      [me, other, other, me]);
     return sendJson(res, 200, { messages: rows.map(msgRowToObj) });
   }
 
@@ -245,7 +289,7 @@ async function handleApi(req, res, url) {
     const { to, text, image } = await readJson(req);
     if (!to) return sendJson(res, 400, { error: 'missing recipient' });
     if (!text && !image) return sendJson(res, 400, { error: 'empty message' });
-    const recipient = db.prepare('SELECT username FROM users WHERE username = ?').get(to);
+    const recipient = await store.get('SELECT username FROM users WHERE username = ?', [to]);
     if (!recipient) return sendJson(res, 404, { error: 'recipient not found' });
     if (image) {
       if (typeof image !== 'string' || !image.startsWith('data:image/'))
@@ -254,28 +298,24 @@ async function handleApi(req, res, url) {
       if (approxBytes > MAX_IMAGE_BYTES)
         return sendJson(res, 413, { error: 'photo too large (max ~8MB)' });
     }
-    const info = db
-      .prepare(
-        "INSERT INTO messages (sender, recipient, text, image, state, created_at) VALUES (?, ?, ?, ?, 'sent', ?)"
-      )
-      .run(me, to, text || null, image || null, Date.now());
-    const row = db.prepare('SELECT * FROM messages WHERE id = ?').get(Number(info.lastInsertRowid));
-    const msg = deliverMessage(msgRowToObj(row));
+    const info = await store.run(
+      "INSERT INTO messages (sender, recipient, text, image, state, created_at) VALUES (?, ?, ?, ?, 'sent', ?)",
+      [me, to, text || null, image || null, Date.now()]);
+    const row = await store.get('SELECT * FROM messages WHERE id = ?', [info.lastInsertRowid]);
+    const msg = await deliverMessage(msgRowToObj(row));
     return sendJson(res, 201, { message: msg });
   }
 
   if (req.method === 'POST' && route === '/api/messages/read') {
     const { with: other } = await readJson(req);
     if (!other) return sendJson(res, 400, { error: 'missing conversation user' });
-    const rows = db
-      .prepare(
-        "SELECT id FROM messages WHERE sender = ? AND recipient = ? AND state != 'read'"
-      )
-      .all(other, me);
+    const rows = await store.all(
+      "SELECT id FROM messages WHERE sender = ? AND recipient = ? AND state != 'read'",
+      [other, me]);
     if (rows.length) {
-      db.prepare(
-        "UPDATE messages SET state = 'read' WHERE sender = ? AND recipient = ? AND state != 'read'"
-      ).run(other, me);
+      await store.run(
+        "UPDATE messages SET state = 'read' WHERE sender = ? AND recipient = ? AND state != 'read'",
+        [other, me]);
       const ids = rows.map((r) => r.id);
       pushTo(other, { type: 'receipt', ids, state: 'read', with: me });
     }
@@ -325,11 +365,11 @@ const server = http.createServer(async (req, res) => {
 });
 
 const wss = new WebSocketServer({ noServer: true });
-server.on('upgrade', (req, socket, head) => {
+server.on('upgrade', async (req, socket, head) => {
   const url = new URL(req.url, 'http://localhost');
   if (url.pathname !== '/ws') return socket.destroy();
   const token = url.searchParams.get('token');
-  const row = token && db.prepare('SELECT username FROM sessions WHERE token = ?').get(token);
+  const row = token && (await store.get('SELECT username FROM sessions WHERE token = ?', [token]));
   if (!row) return socket.destroy();
   wss.handleUpgrade(req, socket, head, (ws) => {
     ws.username = row.username;
@@ -342,7 +382,7 @@ wss.on('connection', (ws) => {
   if (!sockets.has(username)) sockets.set(username, new Set());
   sockets.get(username).add(ws);
   ws.send(JSON.stringify({ type: 'hello', app: APP_NAME, username }));
-  deliverPending(username);
+  deliverPending(username).catch(() => {});
   ws.on('close', () => {
     const set = sockets.get(username);
     if (set) {
